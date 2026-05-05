@@ -269,6 +269,18 @@ func newWorkerCommand() *cli.Command {
 			Required: false,
 		},
 		&cli.StringFlag{
+			Name:     "workos-api-key",
+			Usage:    "WorkOS API key for the events client",
+			EnvVars:  []string{"WORKOS_API_KEY"},
+			Required: false,
+		},
+		&cli.StringFlag{
+			Name:     "workos-endpoint",
+			Usage:    "Base URL for WorkOS API calls. Leave unset for production (defaults to https://api.workos.com); set to the dev-idp's local-speakeasy mode for fully-local development.",
+			EnvVars:  []string{"WORKOS_API_URL"},
+			Required: false,
+		},
+		&cli.StringFlag{
 			Name:    "presidio-analyzer-url",
 			Usage:   "Base URL of the Presidio Analyzer service (e.g. http://presidio-analyzer:3000). Empty disables PII scanning.",
 			EnvVars: []string{"PRESIDIO_ANALYZER_URL"},
@@ -460,6 +472,11 @@ func newWorkerCommand() *cli.Command {
 				authz.EngineOpts{DevMode: c.String("environment") == "local"},
 			)
 
+			workosEventsClient, err := newWorkOSEventsClient(c, guardianPolicy)
+			if err != nil {
+				return fmt.Errorf("failed to create WorkOS events client: %w", err)
+			}
+
 			telemetryLogger, shutdown := newTelemetryLogger(ctx, logger, chDB, logsEnabled, toolIOLogsEnabled)
 			shutdownFuncs = append(shutdownFuncs, shutdown)
 
@@ -606,6 +623,7 @@ func newWorkerCommand() *cli.Command {
 				PIIScanner:          piiScanner,
 				ShadowMCPClient:     shadowMCPClient,
 				AuditLogger:         auditLogger,
+				WorkOSEventsClient:  workosEventsClient,
 			})
 
 			return temporalWorker.Run(worker.InterruptCh())
