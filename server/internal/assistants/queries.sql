@@ -13,6 +13,10 @@ WHERE deleted IS FALSE
       AND warm_until < @warm_cutoff
       AND COALESCE(last_heartbeat_at, updated_at) < @heartbeat_cutoff
     )
+    -- Backstop for activities that exhaust Temporal's retry budget after CAS
+    -- active->expiring without reaching Stop. Without this the partial unique
+    -- index on (assistant_thread_id) blocks new admits indefinitely.
+    OR (state = @expiring_state AND updated_at < @expiring_cutoff)
   )
 RETURNING assistant_id;
 
@@ -375,17 +379,6 @@ WHERE t.id = @thread_id
 ORDER BY r.created_at DESC
 LIMIT 1;
 
--- name: LoadActiveRuntimeRecord :one
-SELECT id, assistant_thread_id, assistant_id, project_id, backend, backend_metadata_json, state, warm_until
-FROM assistant_runtimes
-WHERE project_id = @project_id
-  AND assistant_thread_id = @thread_id
-  AND deleted IS FALSE
-  AND ended IS FALSE
-  AND state IN (@starting_state, @active_state)
-ORDER BY created_at DESC
-LIMIT 1;
-
 -- name: ClaimNextPendingEvent :one
 WITH next_event AS (
   SELECT e.id
@@ -464,7 +457,7 @@ WHERE project_id = @project_id
   AND assistant_thread_id = @thread_id
   AND deleted IS FALSE
   AND ended IS FALSE
-  AND state IN (@starting_state, @active_state);
+  AND state IN (@starting_state, @active_state, @expiring_state);
 
 -- name: ListAssistantRuntimesForReap :many
 -- Returns every runtime row for an assistant that still carries backend
@@ -508,3 +501,30 @@ SET state = @reaped_state,
     deleted_at = COALESCE(deleted_at, clock_timestamp())
 WHERE id = @runtime_id
   AND project_id = @project_id;
+
+-- name: BeginExpireAssistantRuntime :one
+-- Accepts both `active` and `expiring` so a Temporal-retried attempt (after
+-- Stop failed mid-flight) re-enters the Status/Stop path idempotently.
+-- ErrNoRows means another actor (Stop, reaper, manual API) already finalized
+-- the row; callers must not then call Stop.
+UPDATE assistant_runtimes
+SET
+  state = @expiring_state,
+  updated_at = clock_timestamp()
+WHERE project_id = @project_id
+  AND assistant_thread_id = @thread_id
+  AND state IN (@active_state, @expiring_state)
+  AND deleted IS FALSE
+  AND ended IS FALSE
+RETURNING id, assistant_thread_id, assistant_id, project_id, backend, backend_metadata_json, state, warm_until;
+
+-- name: RevertExpireAssistantRuntimeToActive :exec
+UPDATE assistant_runtimes
+SET
+  state = @active_state,
+  warm_until = @warm_until,
+  last_heartbeat_at = clock_timestamp(),
+  updated_at = clock_timestamp()
+WHERE id = @runtime_id
+  AND project_id = @project_id
+  AND state = @expiring_state;
