@@ -444,21 +444,6 @@ func TestPluginsService_GetPublishStatus_Configured(t *testing.T) {
 	require.False(t, result.Connected)
 }
 
-func TestPluginsService_PublishPlugins_NoPlugins(t *testing.T) {
-	t.Parallel()
-
-	mock := &mockGitHubPublisher{}
-	ctx, ti := newTestPluginsServiceWithGitHub(t, mock)
-
-	_, err := ti.service.PublishPlugins(ctx, &gen.PublishPluginsPayload{})
-	require.Error(t, err)
-
-	var oopsErr *oops.ShareableError
-	require.ErrorAs(t, err, &oopsErr)
-	require.Equal(t, oops.CodeBadRequest, oopsErr.Code)
-	require.False(t, mock.createRepoCalled)
-}
-
 func TestPluginsService_PublishPlugins_HappyPath(t *testing.T) {
 	t.Parallel()
 
@@ -924,6 +909,43 @@ func TestPluginsService_PublishPlugins_EmitsObservabilityPlugin(t *testing.T) {
 	require.NotNil(t, mock.lastPushedFiles[cursorObservability+"/.cursor-plugin/plugin.json"], "cursor observability plugin.json missing")
 	require.NotNil(t, mock.lastPushedFiles[cursorObservability+"/hooks.json"], "cursor observability hooks.json missing")
 	require.NotNil(t, mock.lastPushedFiles[cursorObservability+"/hook.sh"], "cursor observability hook.sh missing")
+}
+
+// PublishPlugins must succeed when the org has no custom plugins — the
+// observability plugin alone is enough to ship a marketplace, since it's
+// always emitted on publish.
+func TestPluginsService_PublishPlugins_ObservabilityOnly(t *testing.T) {
+	t.Parallel()
+
+	mock := &mockGitHubPublisher{}
+	ctx, ti := newTestPluginsServiceWithGitHub(t, mock)
+
+	_, err := ti.service.PublishPlugins(ctx, &gen.PublishPluginsPayload{})
+	require.NoError(t, err)
+
+	claudeObservability, cursorObservability := orgObservabilitySlugs(t, ctx, ti)
+
+	require.NotNil(t, mock.lastPushedFiles[claudeObservability+"/hook.sh"], "claude observability hook.sh missing")
+	require.NotNil(t, mock.lastPushedFiles[cursorObservability+"/hook.sh"], "cursor observability hook.sh missing")
+
+	for _, p := range []struct {
+		path     string
+		expected string
+	}{
+		{".claude-plugin/marketplace.json", claudeObservability},
+		{".cursor-plugin/marketplace.json", cursorObservability},
+	} {
+		raw := mock.lastPushedFiles[p.path]
+		require.NotNil(t, raw, p.path+" missing")
+		var market struct {
+			Plugins []struct {
+				Name string `json:"name"`
+			} `json:"plugins"`
+		}
+		require.NoError(t, json.Unmarshal(raw, &market))
+		require.Len(t, market.Plugins, 1, "expected only observability plugin in %s", p.path)
+		require.Equal(t, p.expected, market.Plugins[0].Name, "%s", p.path)
+	}
 }
 
 // The observability hook script must contain the freshly-minted hooks-scoped
