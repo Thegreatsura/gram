@@ -62,7 +62,7 @@ import (
 func UsageCommands() []string {
 	return []string{
 		"about openapi",
-		"access (list-roles|get-role|create-role|update-role|delete-role|list-scopes|list-members|list-grants|update-member-role|get-rbac-status|enable-rbac|disable-rbac)",
+		"access (list-roles|get-role|create-role|update-role|delete-role|list-scopes|list-members|list-grants|update-member-role|get-rbac-status|enable-rbac|disable-rbac|list-challenges|resolve-challenge)",
 		"admin poke",
 		"assets (serve-image|upload-image|upload-functions|upload-open-ap-iv3|fetch-open-ap-iv3-from-url|serve-open-ap-iv3|serve-function|list-assets|upload-chat-attachment|serve-chat-attachment|create-signed-chat-attachment-url|serve-chat-attachment-signed)",
 		"assistants (list-assistants|get-assistant|create-assistant|update-assistant|delete-assistant)",
@@ -178,6 +178,22 @@ func ParseEndpoint(
 
 		accessDisableRBACFlags            = flag.NewFlagSet("disable-rbac", flag.ExitOnError)
 		accessDisableRBACSessionTokenFlag = accessDisableRBACFlags.String("session-token", "", "")
+
+		accessListChallengesFlags            = flag.NewFlagSet("list-challenges", flag.ExitOnError)
+		accessListChallengesOutcomeFlag      = accessListChallengesFlags.String("outcome", "", "")
+		accessListChallengesPrincipalUrnFlag = accessListChallengesFlags.String("principal-urn", "", "")
+		accessListChallengesScopeFlag        = accessListChallengesFlags.String("scope", "", "")
+		accessListChallengesProjectIDFlag    = accessListChallengesFlags.String("project-id", "", "")
+		accessListChallengesResolvedFlag     = accessListChallengesFlags.String("resolved", "", "")
+		accessListChallengesLimitFlag        = accessListChallengesFlags.String("limit", "50", "")
+		accessListChallengesOffsetFlag       = accessListChallengesFlags.String("offset", "", "")
+		accessListChallengesApikeyTokenFlag  = accessListChallengesFlags.String("apikey-token", "", "")
+		accessListChallengesSessionTokenFlag = accessListChallengesFlags.String("session-token", "", "")
+
+		accessResolveChallengeFlags            = flag.NewFlagSet("resolve-challenge", flag.ExitOnError)
+		accessResolveChallengeBodyFlag         = accessResolveChallengeFlags.String("body", "REQUIRED", "")
+		accessResolveChallengeApikeyTokenFlag  = accessResolveChallengeFlags.String("apikey-token", "", "")
+		accessResolveChallengeSessionTokenFlag = accessResolveChallengeFlags.String("session-token", "", "")
 
 		adminFlags = flag.NewFlagSet("admin", flag.ContinueOnError)
 
@@ -1340,6 +1356,8 @@ func ParseEndpoint(
 	accessGetRBACStatusFlags.Usage = accessGetRBACStatusUsage
 	accessEnableRBACFlags.Usage = accessEnableRBACUsage
 	accessDisableRBACFlags.Usage = accessDisableRBACUsage
+	accessListChallengesFlags.Usage = accessListChallengesUsage
+	accessResolveChallengeFlags.Usage = accessResolveChallengeUsage
 
 	adminFlags.Usage = adminUsage
 	adminPokeFlags.Usage = adminPokeUsage
@@ -1765,6 +1783,12 @@ func ParseEndpoint(
 
 			case "disable-rbac":
 				epf = accessDisableRBACFlags
+
+			case "list-challenges":
+				epf = accessListChallengesFlags
+
+			case "resolve-challenge":
+				epf = accessResolveChallengeFlags
 
 			}
 
@@ -2575,6 +2599,12 @@ func ParseEndpoint(
 			case "disable-rbac":
 				endpoint = c.DisableRBAC()
 				data, err = accessc.BuildDisableRBACPayload(*accessDisableRBACSessionTokenFlag)
+			case "list-challenges":
+				endpoint = c.ListChallenges()
+				data, err = accessc.BuildListChallengesPayload(*accessListChallengesOutcomeFlag, *accessListChallengesPrincipalUrnFlag, *accessListChallengesScopeFlag, *accessListChallengesProjectIDFlag, *accessListChallengesResolvedFlag, *accessListChallengesLimitFlag, *accessListChallengesOffsetFlag, *accessListChallengesApikeyTokenFlag, *accessListChallengesSessionTokenFlag)
+			case "resolve-challenge":
+				endpoint = c.ResolveChallenge()
+				data, err = accessc.BuildResolveChallengePayload(*accessResolveChallengeBodyFlag, *accessResolveChallengeApikeyTokenFlag, *accessResolveChallengeSessionTokenFlag)
 			}
 		case "admin":
 			c := adminc.NewClient(scheme, host, doer, enc, dec, restore)
@@ -3365,7 +3395,7 @@ func aboutOpenapiUsage() {
 
 // accessUsage displays the usage of the access command and its subcommands.
 func accessUsage() {
-	fmt.Fprintln(os.Stderr, `Manage roles and team member access control.`)
+	fmt.Fprintln(os.Stderr, `Manage roles, team member access control, and authorization challenge events.`)
 	fmt.Fprintf(os.Stderr, "Usage:\n    %s [globalflags] access COMMAND [flags]\n\n", os.Args[0])
 	fmt.Fprintln(os.Stderr, "COMMAND:")
 	fmt.Fprintln(os.Stderr, `    list-roles: List all roles for the current organization.`)
@@ -3380,6 +3410,8 @@ func accessUsage() {
 	fmt.Fprintln(os.Stderr, `    get-rbac-status: Returns whether RBAC is currently enabled for the current organization.`)
 	fmt.Fprintln(os.Stderr, `    enable-rbac: Enable RBAC for the current organization. Seeds default grants for system roles.`)
 	fmt.Fprintln(os.Stderr, `    disable-rbac: Disable RBAC enforcement for the current organization.`)
+	fmt.Fprintln(os.Stderr, `    list-challenges: List authz challenge events from ClickHouse, enriched with resolution state from PostgreSQL.`)
+	fmt.Fprintln(os.Stderr, `    resolve-challenge: Record a resolution for a denied authz challenge. The caller is responsible for assigning the role first.`)
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Additional help:")
 	fmt.Fprintf(os.Stderr, "    %s access COMMAND --help\n", os.Args[0])
@@ -3626,6 +3658,62 @@ func accessDisableRBACUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access disable-rbac --session-token \"abc123\"")
+}
+
+func accessListChallengesUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] access list-challenges", os.Args[0])
+	fmt.Fprint(os.Stderr, " -outcome STRING")
+	fmt.Fprint(os.Stderr, " -principal-urn STRING")
+	fmt.Fprint(os.Stderr, " -scope STRING")
+	fmt.Fprint(os.Stderr, " -project-id STRING")
+	fmt.Fprint(os.Stderr, " -resolved BOOL")
+	fmt.Fprint(os.Stderr, " -limit INT")
+	fmt.Fprint(os.Stderr, " -offset INT")
+	fmt.Fprint(os.Stderr, " -apikey-token STRING")
+	fmt.Fprint(os.Stderr, " -session-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `List authz challenge events from ClickHouse, enriched with resolution state from PostgreSQL.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -outcome STRING: `)
+	fmt.Fprintln(os.Stderr, `    -principal-urn STRING: `)
+	fmt.Fprintln(os.Stderr, `    -scope STRING: `)
+	fmt.Fprintln(os.Stderr, `    -project-id STRING: `)
+	fmt.Fprintln(os.Stderr, `    -resolved BOOL: `)
+	fmt.Fprintln(os.Stderr, `    -limit INT: `)
+	fmt.Fprintln(os.Stderr, `    -offset INT: `)
+	fmt.Fprintln(os.Stderr, `    -apikey-token STRING: `)
+	fmt.Fprintln(os.Stderr, `    -session-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access list-challenges --outcome \"deny\" --principal-urn \"abc123\" --scope \"abc123\" --project-id \"abc123\" --resolved false --limit 2 --offset 1 --apikey-token \"abc123\" --session-token \"abc123\"")
+}
+
+func accessResolveChallengeUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] access resolve-challenge", os.Args[0])
+	fmt.Fprint(os.Stderr, " -body JSON")
+	fmt.Fprint(os.Stderr, " -apikey-token STRING")
+	fmt.Fprint(os.Stderr, " -session-token STRING")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Record a resolution for a denied authz challenge. The caller is responsible for assigning the role first.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -body JSON: `)
+	fmt.Fprintln(os.Stderr, `    -apikey-token STRING: `)
+	fmt.Fprintln(os.Stderr, `    -session-token STRING: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "access resolve-challenge --body '{\n      \"challenge_id\": \"abc123\",\n      \"principal_urn\": \"abc123\",\n      \"resolution_type\": \"dismissed\",\n      \"resource_id\": \"abc123\",\n      \"resource_kind\": \"abc123\",\n      \"role_slug\": \"abc123\",\n      \"scope\": \"abc123\"\n   }' --apikey-token \"abc123\" --session-token \"abc123\"")
 }
 
 // adminUsage displays the usage of the admin command and its subcommands.
