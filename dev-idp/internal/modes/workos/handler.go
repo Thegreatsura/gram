@@ -547,6 +547,7 @@ func (h *Handler) resolveShadowUserID(ctx context.Context) (uuid.UUID, error) {
 	}
 
 	shadow, err := queries.UpsertUserByEmail(ctx, repo.UpsertUserByEmailParams{
+		ID:          defaultuser.DeterministicUserID(user.Email),
 		Email:       user.Email,
 		DisplayName: strings.TrimSpace(user.FirstName + " " + user.LastName),
 	})
@@ -576,6 +577,7 @@ func (h *Handler) bootstrapWorkosCurrentUser(ctx context.Context) (repo.CurrentU
 	row, err := repo.New(h.db).UpsertCurrentUser(ctx, repo.UpsertCurrentUserParams{
 		Mode:       Mode,
 		SubjectRef: user.ID,
+		Ts:         time.Now(),
 	})
 	if err != nil {
 		return repo.CurrentUser{}, fmt.Errorf("persist default workos currentUser: %w", err)
