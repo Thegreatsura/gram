@@ -1,7 +1,7 @@
 lockVersion: 2.0.0
 id: 0e7a6274-2092-40cd-9586-9415c6655c64
 management:
-  docChecksum: 04cc55ef5de7b6f62b5c668d6f696535
+  docChecksum: bce46ba0238371194274bf66de7dd94c
   docVersion: 0.0.1
   speakeasyVersion: 1.761.5
   generationVersion: 2.879.13
@@ -603,7 +603,7 @@ trackedFiles:
   docs/models/components/publishpluginsresult.md:
     last_write_checksum: sha1:e7d96379e1856c7f1f3b504e849ce68f7a297c60
   docs/models/components/publishstatusresult.md:
-    last_write_checksum: sha1:7cc1a17fb154e6a443ec205623689e092c2acb35
+    last_write_checksum: sha1:937ad1c5be26da5f1c2c7e33767b46806960c5c4
   docs/models/components/rbacstatus.md:
     last_write_checksum: sha1:a1751e0bc4882c9845778fd6d849acc58031c82e
   docs/models/components/reason.md:
@@ -3653,7 +3653,7 @@ trackedFiles:
   src/models/components/publishpluginsresult.ts:
     last_write_checksum: sha1:c5a315b9000dc53a5068f7b7ffd57eec889fa732
   src/models/components/publishstatusresult.ts:
-    last_write_checksum: sha1:1ea6cb39bb46b3741341f93207ebdb2785d397db
+    last_write_checksum: sha1:69f15498251a92f71fbe567b062e0eb6e3e91d6b
   src/models/components/rbacstatus.ts:
     last_write_checksum: sha1:16621be3d302c1526dbd21d165453c9028f1bcfd
   src/models/components/redeployrequestbody.ts:
