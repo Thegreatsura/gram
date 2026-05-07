@@ -169,12 +169,13 @@ func (a *AnalyzeBatch) fetchContent(ctx context.Context, args AnalyzeBatchArgs) 
 	return messages, nil
 }
 
-// scan runs enabled scanners concurrently. Gitleaks is CPU-bound, presidio is
-// IO-bound, so they parallelize well and avoid exceeding the heartbeat timeout.
-// All tool-call scanners (shadow_mcp, destructive_tool, cli_destructive) run
-// serially after the parallel scans — shadow_mcp/destructive_tool make
-// per-message DB calls; cli_destructive is purely in-memory regex but kept
-// in the same lane for consistency.
+// scan runs enabled scanners concurrently. Gitleaks (CPU-bound), presidio
+// (IO-bound), and prompt-injection (CPU-bound, regex-only) all run in
+// parallel — folding the cheap prompt-injection pass under presidio's
+// network wait keeps it free. All tool-call scanners (shadow_mcp,
+// destructive_tool, cli_destructive) run serially after the parallel scans
+// — shadow_mcp/destructive_tool make per-message DB calls; cli_destructive
+// is purely in-memory regex but kept in the same lane for consistency.
 func (a *AnalyzeBatch) scan(ctx context.Context, args AnalyzeBatchArgs, messages []repo.GetMessageContentBatchRow) ([][]Finding, error) {
 	ctx, scanSpan := a.tracer.Start(ctx, "risk.scanMessages")
 	defer scanSpan.End()
@@ -191,6 +192,7 @@ func (a *AnalyzeBatch) scan(ctx context.Context, args AnalyzeBatchArgs, messages
 	shadowMCPFindings := make([][]Finding, n)
 	destructiveToolFindings := make([][]Finding, n)
 	cliDestructiveFindings := make([][]Finding, n)
+	promptInjectionFindings := make([][]Finding, n)
 
 	var wg sync.WaitGroup
 	var gitleaksErr error
@@ -222,6 +224,20 @@ func (a *AnalyzeBatch) scan(ctx context.Context, args AnalyzeBatchArgs, messages
 		})
 	}
 
+	if slices.Contains(args.Sources, SourcePromptInjection) {
+		wg.Go(func() {
+			for i, content := range contents {
+				f, err := DetectPromptInjection(ctx, content)
+				if err != nil {
+					a.logger.WarnContext(ctx, "prompt injection scan failed", attr.SlogError(err))
+					continue
+				}
+				promptInjectionFindings[i] = f
+			}
+			activity.RecordHeartbeat(ctx, "prompt_injection")
+		})
+	}
+
 	wg.Wait()
 
 	if gitleaksErr != nil {
@@ -249,7 +265,7 @@ func (a *AnalyzeBatch) scan(ctx context.Context, args AnalyzeBatchArgs, messages
 		// Gitleaks findings come first so they take priority over presidio
 		// when both scanners match the same text region. Tool-call findings are
 		// non-overlapping with content scanners, so they pass through dedup.
-		combined := slices.Concat(gitleaksFindings[i], presidioFindings[i], shadowMCPFindings[i], destructiveToolFindings[i], cliDestructiveFindings[i])
+		combined := slices.Concat(gitleaksFindings[i], presidioFindings[i], shadowMCPFindings[i], destructiveToolFindings[i], cliDestructiveFindings[i], promptInjectionFindings[i])
 		merged[i] = dedup(combined)
 	}
 	return merged, nil
